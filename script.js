@@ -1,96 +1,155 @@
-let lastDeletedTask = null; // For undo
+const taskInput = document.getElementById("taskInput");
+const taskList = document.getElementById("taskList");
+const undoDiv = document.getElementById("undoDiv");
+const modal = document.getElementById("confirmModal");
 
-// Load tasks when page loads
-window.onload = function() {
-  renderTasks();
+let lastDeletedTask = null;
+let undoTimeout = null;
+
+window.onload = () => {
+  const savedTasks = JSON.parse(localStorage.getItem("tasks")) || [];
+  savedTasks.forEach(task =>
+    createTask(task.text, task.done, task.createdAt, task.completedAt)
+  );
+  if (localStorage.getItem("mode") === "light") {
+    document.body.classList.add("light-mode");
+  }
 };
 
-// Add a new task
 function addTask() {
-  const input = document.getElementById("taskInput");
-  const taskText = input.value.trim();
-
-  if (taskText === "") {
-    alert("Please enter a task.");
-    return;
-  }
-
-  const newTask = {
-    text: taskText,
-    completed: false
-  };
-
-  let tasks = getTasksFromStorage();
-  tasks.push(newTask);
-  saveTasksToStorage(tasks);
-  input.value = "";
-  renderTasks();
+  const taskText = taskInput.value.trim();
+  if (!taskText) return alert("Please enter a task!");
+  createTask(taskText);
+  saveToLocalStorage();
+  taskInput.value = "";
 }
 
-// Display tasks
-function renderTasks() {
-  const taskList = document.getElementById("taskList");
-  taskList.innerHTML = "";
+function createTask(text, done = false, createdAt = new Date().toISOString(), completedAt = "") {
+  const li = document.createElement("li");
+  if (done) li.classList.add("done");
 
-  const tasks = getTasksFromStorage();
+  const formattedCreated = new Date(createdAt).toLocaleString();
+  const formattedCompleted = completedAt ? `<br><small>✅ Completed: ${new Date(completedAt).toLocaleString()}</small>` : "";
 
-  tasks.forEach((task, index) => {
-    const li = document.createElement("li");
-    li.textContent = task.text;
-    li.className = task.completed ? "completed" : "";
+  li.innerHTML = `
+    <div>
+      <span onclick="toggleDone(this)">${text}</span><br>
+      <small>🕒 Created: ${formattedCreated}</small>
+      ${formattedCompleted}
+    </div>
+    <button class="delete-btn" onclick="deleteTask(this)">Delete</button>
+  `;
+  li.setAttribute("data-created", createdAt);
+  li.setAttribute("data-completed", completedAt || "");
+  taskList.appendChild(li);
+}
 
-    // Toggle completion
-    li.onclick = () => {
-      tasks[index].completed = !tasks[index].completed;
-      saveTasksToStorage(tasks);
-      renderTasks();
-    };
+function toggleDone(el) {
+  const li = el.closest("li");
+  li.classList.toggle("done");
 
-    // Delete button
-    const delBtn = document.createElement("button");
-    delBtn.textContent = "Delete";
-    delBtn.className = "delete-btn";
-    delBtn.onclick = (e) => {
-      e.stopPropagation(); // prevent toggling when deleting
-      lastDeletedTask = tasks[index]; // store for undo
-      tasks.splice(index, 1);
-      saveTasksToStorage(tasks);
-      renderTasks();
-    };
+  const completedAt = li.classList.contains("done") ? new Date().toISOString() : "";
+  li.setAttribute("data-completed", completedAt);
 
-    li.appendChild(delBtn);
-    taskList.appendChild(li);
+  const createdTime = new Date(li.getAttribute("data-created")).toLocaleString();
+  const text = el.textContent;
+
+  li.querySelector("div").innerHTML = `
+    <span onclick="toggleDone(this)">${text}</span><br>
+    <small>🕒 Created: ${createdTime}</small>
+    ${completedAt ? `<br><small>✅ Completed: ${new Date(completedAt).toLocaleString()}</small>` : ""}
+  `;
+
+  saveToLocalStorage();
+}
+
+function deleteTask(btn) {
+  const li = btn.parentElement;
+  lastDeletedTask = {
+    text: li.querySelector("span").textContent,
+    done: li.classList.contains("done"),
+    createdAt: li.getAttribute("data-created"),
+    completedAt: li.getAttribute("data-completed")
+  };
+  li.remove();
+  saveToLocalStorage();
+  showUndoButton();
+}
+
+function saveToLocalStorage() {
+  const tasks = [];
+  taskList.querySelectorAll("li").forEach(li => {
+    tasks.push({
+      text: li.querySelector("span").textContent,
+      done: li.classList.contains("done"),
+      createdAt: li.getAttribute("data-created"),
+      completedAt: li.getAttribute("data-completed")
+    });
+  });
+  localStorage.setItem("tasks", JSON.stringify(tasks));
+}
+
+function showUndoButton() {
+  undoDiv.innerHTML = `<button id="undoBtn">Undo Delete</button>`;
+  document.getElementById("undoBtn").addEventListener("click", () => {
+    if (lastDeletedTask) {
+      createTask(
+        lastDeletedTask.text,
+        lastDeletedTask.done,
+        lastDeletedTask.createdAt,
+        lastDeletedTask.completedAt
+      );
+      saveToLocalStorage();
+      lastDeletedTask = null;
+    }
+    undoDiv.innerHTML = "";
+    clearTimeout(undoTimeout);
+  });
+
+  clearTimeout(undoTimeout);
+  undoTimeout = setTimeout(() => {
+    undoDiv.innerHTML = "";
+    lastDeletedTask = null;
+  }, 5000);
+}
+
+function toggleMode() {
+  document.body.classList.toggle("light-mode");
+  const mode = document.body.classList.contains("light-mode") ? "light" : "dark";
+  localStorage.setItem("mode", mode);
+}
+
+function filterTasks(type) {
+  const allTasks = document.querySelectorAll("#taskList li");
+  allTasks.forEach(task => {
+    const isDone = task.classList.contains("done");
+    task.style.display =
+      type === "all" ||
+      (type === "done" && isDone) ||
+      (type === "pending" && !isDone)
+        ? "flex"
+        : "none";
   });
 }
 
-// Undo the last delete
-function undoDelete() {
-  if (lastDeletedTask) {
-    let tasks = getTasksFromStorage();
-    tasks.push(lastDeletedTask);
-    saveTasksToStorage(tasks);
-    lastDeletedTask = null;
-    renderTasks();
-  } else {
-    alert("No task to undo.");
-  }
+function showModal() {
+  modal.style.display = "flex";
 }
 
-// Delete all tasks with confirmation
+function hideModal() {
+  modal.style.display = "none";
+}
+
 function deleteAllTasks() {
-  const confirmDelete = confirm("Are you sure you want to delete ALL tasks?");
-  if (confirmDelete) {
-    localStorage.removeItem("tasks");
-    lastDeletedTask = null;
-    renderTasks();
+  taskList.innerHTML = "";
+  localStorage.removeItem("tasks");
+  undoDiv.innerHTML = "";
+  modal.style.display = "none";
+}
+
+document.getElementById("taskInput").addEventListener("keypress", function (event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addTask();
   }
-}
-
-// Helpers
-function getTasksFromStorage() {
-  return JSON.parse(localStorage.getItem("tasks")) || [];
-}
-
-function saveTasksToStorage(tasks) {
-  localStorage.setItem("tasks", JSON.stringify(tasks));
-}
+});
